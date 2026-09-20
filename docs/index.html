@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Monopoly RL replay</title>
+<style>
+:root{
+  --bg:#f6f5f2; --panel:#fff; --ink:#1a1a1a; --muted:#6b6b6b; --line:#dcd9d2;
+  --accent:#2f6f4f; --p0:#c0392b; --p1:#2471a3; --p2:#1e8449;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#15161a; --panel:#1e2027; --ink:#ecebe8; --muted:#9a9a9a; --line:#33363f;
+    --accent:#4caf7d; --p0:#e5645a; --p1:#5aa9e6; --p2:#5ec98a;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#15161a; --panel:#1e2027; --ink:#ecebe8; --muted:#9a9a9a; --line:#33363f;
+  --accent:#4caf7d; --p0:#e5645a; --p1:#5aa9e6; --p2:#5ec98a;
+}
+*{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{padding:14px 16px 6px;max-width:1180px;margin:0 auto}
+h1{font-size:18px;margin:0 0 2px;font-weight:600}
+.sub{color:var(--muted);font-size:13px;margin:0 0 12px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 16px 40px;
+  display:grid;gap:16px;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr)}
+@media (max-width:860px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+.loader{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+input[type=text],select,button{font:inherit;color:var(--ink);background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+input[type=text]{width:150px;text-transform:uppercase;letter-spacing:.09em}
+button{cursor:pointer}
+button.primary{background:var(--accent);color:#fff;border-color:transparent}
+button:disabled{opacity:.45;cursor:default}
+#board{display:grid;grid-template-columns:repeat(11,1fr);grid-template-rows:repeat(11,1fr);
+  aspect-ratio:1/1;gap:2px;width:100%}
+.cell{position:relative;background:var(--bg);border:1px solid var(--line);border-radius:3px;
+  overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.bar{height:16%;min-height:5px;width:100%;background:transparent}
+.nm{font-size:8px;line-height:1.05;padding:2px 2px 0;color:var(--muted);
+  overflow:hidden;flex:1}
+@media (max-width:620px){.nm{font-size:6px}}
+.mid{grid-column:2/11;grid-row:2/11;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:6px;text-align:center;padding:10px}
+.mid .big{font-size:clamp(16px,3.4vw,26px);font-weight:600;letter-spacing:.02em}
+.mid .small{color:var(--muted);font-size:12px;max-width:80%}
+.toks{position:absolute;inset:auto 1px 1px 1px;display:flex;gap:2px;flex-wrap:wrap}
+.tok{width:7px;height:7px;border-radius:50%;box-shadow:0 0 0 1px var(--panel)}
+.own{position:absolute;top:1px;right:1px;width:6px;height:6px;border-radius:2px}
+.hs{position:absolute;top:1px;left:1px;display:flex;gap:1px}
+.h{width:3px;height:5px;background:var(--accent);border-radius:1px}
+.h.hotel{width:7px;background:#c0392b}
+.mg{position:absolute;inset:0;background:repeating-linear-gradient(45deg,
+  transparent 0 3px,rgba(128,128,128,.35) 3px 6px)}
+.here{outline:2px solid var(--accent);outline-offset:-2px}
+.controls{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
+input[type=range]{flex:1;min-width:140px;accent-color:var(--accent)}
+.pl{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line)}
+.pl:last-child{border-bottom:0}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.pl .nmx{flex:1;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.pl .cash{font-variant-numeric:tabular-nums}
+.pl.out{opacity:.4}
+.meta{color:var(--muted);font-size:12px;margin-bottom:8px}
+#log{height:min(46vh,380px);overflow-y:auto;font-size:13px;
+  -webkit-overflow-scrolling:touch}
+.ev{padding:3px 6px;border-radius:6px;display:flex;gap:8px}
+.ev .tno{color:var(--muted);font-variant-numeric:tabular-nums;flex:none}
+.ev.cur{background:rgba(127,127,127,.18)}
+.err{color:#c0392b;font-size:13px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);
+  margin:0 0 8px;font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Monopoly RL replay</h1>
+  <p class="sub">Paste a game id from the logs, or pick a recent one.</p>
+</header>
+
+<div class="wrap">
+  <div>
+    <div class="card">
+      <div class="loader">
+        <input type="text" id="gid" placeholder="GAME ID" maxlength="6" autocapitalize="characters" autocomplete="off" spellcheck="false">
+        <button class="primary" id="load">Load</button>
+        <select id="recent"><option value="">Recent games</option></select>
+        <button id="pick">Open file</button>
+        <input type="file" id="file" accept=".json" hidden>
+      </div>
+      <div id="err" class="err"></div>
+      <div id="board"></div>
+      <div class="controls">
+        <button id="first">Start</button>
+        <button id="prev">Back</button>
+        <button class="primary" id="play">Play</button>
+        <button id="next">Next</button>
+        <button id="last">End</button>
+        <select id="speed">
+          <option value="600">Slow</option>
+          <option value="260" selected>Normal</option>
+          <option value="90">Fast</option>
+          <option value="20">Blur</option>
+        </select>
+      </div>
+      <div class="controls">
+        <input type="range" id="scrub" min="0" max="0" value="0">
+        <span class="meta" id="counter" style="margin:0"></span>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:16px">
+      <h2>Players</h2>
+      <div id="players"></div>
+      <div class="meta" id="gmeta" style="margin:8px 0 0"></div>
+    </div>
+    <div class="card">
+      <h2>Move log</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BOARD = [{"n":"GO","k":"go","g":"","p":0},{"n":"Mediterranean","k":"street","g":"brown","p":60},{"n":"Chest","k":"chest","g":"","p":0},{"n":"Baltic","k":"street","g":"brown","p":60},{"n":"Income Tax","k":"tax","g":"","p":0},{"n":"Reading RR","k":"rail","g":"rail","p":200},{"n":"Oriental","k":"street","g":"lightblue","p":100},{"n":"Chance","k":"chance","g":"","p":0},{"n":"Vermont","k":"street","g":"lightblue","p":100},{"n":"Connecticut","k":"street","g":"lightblue","p":120},{"n":"Jail","k":"jail","g":"","p":0},{"n":"St. Charles","k":"street","g":"pink","p":140},{"n":"Electric Co","k":"util","g":"util","p":150},{"n":"States","k":"street","g":"pink","p":140},{"n":"Virginia","k":"street","g":"pink","p":160},{"n":"Pennsylvania RR","k":"rail","g":"rail","p":200},{"n":"St. James","k":"street","g":"orange","p":180},{"n":"Chest","k":"chest","g":"","p":0},{"n":"Tennessee","k":"street","g":"orange","p":180},{"n":"New York","k":"street","g":"orange","p":200},{"n":"Free Parking","k":"free","g":"","p":0},{"n":"Kentucky","k":"street","g":"red","p":220},{"n":"Chance","k":"chance","g":"","p":0},{"n":"Indiana","k":"street","g":"red","p":220},{"n":"Illinois","k":"street","g":"red","p":240},{"n":"B&O RR","k":"rail","g":"rail","p":200},{"n":"Atlantic","k":"street","g":"yellow","p":260},{"n":"Ventnor","k":"street","g":"yellow","p":260},{"n":"Water Works","k":"util","g":"util","p":150},{"n":"Marvin Gardens","k":"street","g":"yellow","p":280},{"n":"Go To Jail","k":"gotojail","g":"","p":0},{"n":"Pacific","k":"street","g":"green","p":300},{"n":"N. Carolina","k":"street","g":"green","p":300},{"n":"Chest","k":"chest","g":"","p":0},{"n":"Pennsylvania","k":"street","g":"green","p":320},{"n":"Short Line","k":"rail","g":"rail","p":200},{"n":"Chance","k":"chance","g":"","p":0},{"n":"Park Place","k":"street","g":"darkblue","p":350},{"n":"Luxury Tax","k":"tax","g":"","p":0},{"n":"Boardwalk","k":"street","g":"darkblue","p":400}];
+const GCOL = {brown:"#7b4b2a",lightblue:"#a5d8e6",pink:"#d34d94",orange:"#e08b2e",
+  red:"#c0392b",yellow:"#e8c33a",green:"#1e8449",darkblue:"#2450a8",
+  rail:"#555a63",util:"#8a8f99"};
+const PCOL = ["var(--p0)","var(--p1)","var(--p2)"];
+
+function cellPos(i){
+  if(i===0) return [11,11];
+  if(i<10) return [11,11-i];
+  if(i===10) return [11,1];
+  if(i<20) return [21-i,1];
+  if(i===20) return [1,1];
+  if(i<30) return [1,i-19];
+  if(i===30) return [1,11];
+  return [i-29,11];
+}
+
+const boardEl = document.getElementById("board");
+const cells = [];
+for(let i=0;i<40;i++){
+  const sp = BOARD[i], [r,c] = cellPos(i);
+  const d = document.createElement("div");
+  d.className = "cell";
+  d.style.gridRow = r; d.style.gridColumn = c;
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  if(GCOL[sp.g]) bar.style.background = GCOL[sp.g];
+  const nm = document.createElement("div");
+  nm.className = "nm"; nm.textContent = sp.n;
+  const toks = document.createElement("div"); toks.className = "toks";
+  d.append(bar,nm,toks);
+  boardEl.append(d);
+  cells.push({el:d,toks:toks});
+}
+const mid = document.createElement("div");
+mid.className = "mid";
+mid.innerHTML = '<div class="big" id="midline">No replay loaded</div>'+
+  '<div class="small" id="midsub">Enter a game id above</div>';
+boardEl.append(mid);
+
+let replay=null, idx=0, timer=null;
+
+function money(n){ return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString(); }
+
+function stateAt(i){
+  const owner=new Array(40).fill(null), houses=new Array(40).fill(0),
+        mort=new Array(40).fill(false), dead=new Set();
+  for(let k=0;k<=i && k<replay.events.length;k++){
+    const e=replay.events[k];
+    if(e.e==="buy"||e.e==="auction_won"){ owner[e.prop]=e.p; }
+    else if(e.e==="trade"){ owner[e.prop]=e.buyer; }
+    else if(e.e==="build"){ houses[e.prop]=e.level; }
+    else if(e.e==="sell_house"){ houses[e.prop]=e.level; }
+    else if(e.e==="mortgage"){ mort[e.prop]=true; }
+    else if(e.e==="unmortgage"){ mort[e.prop]=false; }
+    else if(e.e==="bankrupt"){
+      dead.add(e.p);
+      for(let j=0;j<40;j++){
+        if(owner[j]===e.p){ owner[j]= (e.to===null||e.to===undefined)?null:e.to; houses[j]=0;
+          if(e.to===null||e.to===undefined) mort[j]=false; }
+      }
+    }
+  }
+  const e=replay.events[Math.min(i,replay.events.length-1)];
+  return {owner,houses,mort,dead,cash:e.c,pos:e.pos,ev:e};
+}
+
+function describe(e){
+  const who = replay.players[e.p] !== undefined ? replay.players[e.p] : "";
+  const nm = p => BOARD[p] ? BOARD[p].n : p;
+  switch(e.e){
+    case "roll": return who+" rolls "+e.d[0]+" and "+e.d[1];
+    case "land": return who+" lands on "+nm(e.space);
+    case "buy": return who+" buys "+nm(e.prop)+" for "+money(e.price);
+    case "auction_won": return who+" wins "+nm(e.prop)+" at auction for "+money(e.price);
+    case "auction_none": return "No bids for "+nm(e.prop);
+    case "rent": return who+" pays "+money(e.amount)+" rent to "+replay.players[e.to];
+    case "build": return who+" builds on "+nm(e.prop)+
+      (e.level===5?" - hotel":" - "+e.level+" house"+(e.level>1?"s":""));
+    case "sell_house": return who+" sells buildings on "+nm(e.prop);
+    case "mortgage": return who+" mortgages "+nm(e.prop);
+    case "unmortgage": return who+" lifts mortgage on "+nm(e.prop);
+    case "trade": return replay.players[e.buyer]+" buys "+nm(e.prop)+" from "+
+      replay.players[e.seller]+" for "+money(e.price);
+    case "card": return who+" draws: "+e.text;
+    case "pass_go": return who+" passes GO";
+    case "go_to_jail": return who+" goes to jail";
+    case "bankrupt": return who+" is bankrupt"+
+      (e.to===null||e.to===undefined?" to the bank":" to "+replay.players[e.to]);
+    default: return who+" "+e.e;
+  }
+}
+
+function render(){
+  if(!replay) return;
+  const s = stateAt(idx);
+  for(let i=0;i<40;i++){
+    const c=cells[i];
+    c.el.classList.remove("here");
+    c.el.querySelectorAll(".own,.hs,.mg").forEach(n=>n.remove());
+    if(s.owner[i]!==null){
+      const o=document.createElement("div");
+      o.className="own"; o.style.background=PCOL[s.owner[i]];
+      c.el.append(o);
+    }
+    if(s.mort[i]){ const m=document.createElement("div"); m.className="mg"; c.el.append(m); }
+    if(s.houses[i]>0){
+      const h=document.createElement("div"); h.className="hs";
+      if(s.houses[i]===5){ const x=document.createElement("div");
+        x.className="h hotel"; h.append(x); }
+      else for(let k=0;k<s.houses[i];k++){ const x=document.createElement("div");
+        x.className="h"; h.append(x); }
+      c.el.append(h);
+    }
+    c.toks.innerHTML="";
+  }
+  s.pos.forEach((p,pi)=>{
+    if(s.dead.has(pi)) return;
+    const t=document.createElement("div");
+    t.className="tok"; t.style.background=PCOL[pi];
+    cells[p].toks.append(t);
+  });
+  if(s.ev.p!==undefined) cells[s.pos[s.ev.p]].el.classList.add("here");
+
+  document.getElementById("midline").textContent = describe(s.ev);
+  document.getElementById("midsub").textContent =
+    "Round "+s.ev.t+"  -  game "+replay.id;
+
+  const pl=document.getElementById("players");
+  pl.innerHTML="";
+  s.cash.forEach((cash,pi)=>{
+    const props = s.owner.filter(o=>o===pi).length;
+    const out = s.dead.has(pi);
+    const row=document.createElement("div");
+    row.className="pl"+(out?" out":"");
+    row.innerHTML='<span class="dot" style="background:'+PCOL[pi]+'"></span>'+
+      '<span class="nmx">'+replay.players[pi]+'</span>'+
+      '<span class="meta" style="margin:0">'+props+' props</span>'+
+      '<span class="cash">'+(out?"out":money(cash))+'</span>';
+    pl.append(row);
+  });
+
+  document.getElementById("scrub").value=idx;
+  document.getElementById("counter").textContent=(idx+1)+" / "+replay.events.length;
+  const cur=document.querySelector(".ev.cur");
+  if(cur) cur.classList.remove("cur");
+  const next=document.getElementById("ev"+idx);
+  if(next){ next.classList.add("cur");
+    next.scrollIntoView({block:"nearest"}); }
+}
+
+function buildLog(){
+  const log=document.getElementById("log");
+  log.innerHTML="";
+  replay.events.forEach((e,i)=>{
+    const d=document.createElement("div");
+    d.className="ev"; d.id="ev"+i;
+    d.innerHTML='<span class="tno">'+e.t+'</span><span>'+describe(e)+'</span>';
+    d.onclick=()=>{ stop(); idx=i; render(); };
+    log.append(d);
+  });
+}
+
+function stop(){ if(timer){ clearInterval(timer); timer=null;
+  document.getElementById("play").textContent="Play"; } }
+
+function play(){
+  if(timer){ stop(); return; }
+  const ms=+document.getElementById("speed").value;
+  document.getElementById("play").textContent="Pause";
+  timer=setInterval(()=>{
+    if(idx>=replay.events.length-1){ stop(); return; }
+    idx++; render();
+  },ms);
+}
+
+function loadReplay(data){
+  replay=data; idx=0;
+  document.getElementById("scrub").max=data.events.length-1;
+  document.getElementById("gid").value=data.id||"";
+  const w=data.players[data.winner];
+  document.getElementById("gmeta").textContent=
+    "Winner "+w+" - "+data.rounds+" rounds - "+
+    (data.reason==="last_standing"?"last player standing":"round limit")+
+    " - seed "+data.seed;
+  buildLog(); render();
+}
+
+async function fetchId(id){
+  const e=document.getElementById("err"); e.textContent="";
+  try{
+    const r=await fetch("replays/"+id.toUpperCase()+".json",{cache:"no-store"});
+    if(!r.ok) throw new Error(r.status);
+    loadReplay(await r.json());
+  }catch(x){
+    e.textContent="Could not load "+id.toUpperCase()+
+      ". Check the id, or use Open file for a replay saved on this device.";
+  }
+}
+
+document.getElementById("load").onclick=()=>{
+  const v=document.getElementById("gid").value.trim();
+  if(v) fetchId(v);
+};
+document.getElementById("gid").addEventListener("keydown",ev=>{
+  if(ev.key==="Enter") document.getElementById("load").click(); });
+document.getElementById("recent").onchange=ev=>{ if(ev.target.value) fetchId(ev.target.value); };
+document.getElementById("pick").onclick=()=>document.getElementById("file").click();
+document.getElementById("file").onchange=ev=>{
+  const f=ev.target.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>{ try{ loadReplay(JSON.parse(rd.result)); }
+    catch(x){ document.getElementById("err").textContent="That file is not a replay."; } };
+  rd.readAsText(f);
+};
+document.getElementById("play").onclick=play;
+document.getElementById("next").onclick=()=>{ stop();
+  if(replay&&idx<replay.events.length-1){ idx++; render(); } };
+document.getElementById("prev").onclick=()=>{ stop();
+  if(replay&&idx>0){ idx--; render(); } };
+document.getElementById("first").onclick=()=>{ stop(); if(replay){ idx=0; render(); } };
+document.getElementById("last").onclick=()=>{ stop();
+  if(replay){ idx=replay.events.length-1; render(); } };
+document.getElementById("scrub").oninput=ev=>{ stop();
+  if(replay){ idx=+ev.target.value; render(); } };
+
+(async function(){
+  try{
+    const r=await fetch("replays/index.json",{cache:"no-store"});
+    if(!r.ok) return;
+    const list=await r.json();
+    const sel=document.getElementById("recent");
+    list.slice(0,60).forEach(g=>{
+      const o=document.createElement("option");
+      o.value=g.id;
+      o.textContent=g.id+" - "+g.winner+" in "+g.rounds;
+      sel.append(o);
+    });
+  }catch(x){}
+  const q=new URLSearchParams(location.search).get("g");
+  if(q) fetchId(q);
+})();
+</script>
+</body>
+</html>
